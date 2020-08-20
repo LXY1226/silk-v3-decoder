@@ -219,6 +219,8 @@ int main(int argc, char *argv[]) {
         filetime = (double) ftell(speechInFile) / (double) (encControl.API_sampleRate * 16 / 8);
         estPackets = filetime * 50;
         encControl.bitRate = (1 << 20 << 3) / filetime;
+        if (encControl.bitRate > 100000)
+            encControl.bitRate = 100000;
         fseek(speechInFile, 0, SEEK_SET);
     }
 
