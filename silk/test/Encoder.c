@@ -103,8 +103,8 @@ static void print_usage(char *argv[]) {
     printf("\nVersion:20200819    Build By Lin for mirai");
     printf("\nGithub: https://github.com/LXY1226/silk-encoder\n");
     printf("\nAdvanced settings:");
-    printf("\n-isr <kHz>           : Input sampling rate [8,12,16,24,32,44.1,48], default: 24");
-    printf("\n-osr <kHz>           : Output sampling rate [8,12,16,24], default: 24");
+    printf("\n-isr <Hz>            : Input sampling rate [8,12,16,24,32,44.1,48]kHz, default: 24000");
+    printf("\n-osr <Hz>            : Output sampling rate [8,12,16,24]kHz, default: 24000");
     printf("\n-packetlength <ms>   : Packet interval in ms, default: 20");
     printf("\n-rate <bps>          : Target bitrate; default: Auto-Calculated by file length");
     printf("\n-loss <perc>         : Uplink loss estimate, in percent (0-100); default: 0");
@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
     SKP_int32 estPackets, totPackets, ret;
 //    SKP_int32 k, args, estPackets, totPackets, totActPackets, ret;
     SKP_int16 nBytes;
-    double sumBytes, sumActBytes, avg_rate, act_rate, nrg;
+//    double sumBytes, sumActBytes, avg_rate, act_rate, nrg;
     SKP_uint8 payload[MAX_BYTES_PER_FRAME * MAX_INPUT_FRAMES];
     SKP_int16 in[FRAME_LENGTH_MS * MAX_API_FS_KHZ * MAX_INPUT_FRAMES];
 //    char speechInFileName[150], bitOutFileName[150];
@@ -135,7 +135,7 @@ int main(int argc, char *argv[]) {
 
     /* default settings */
     SKP_int32 smplsSinceLastPacket, packetSize_ms = 20;
-    SKP_int32 packetLoss_perc = 0;
+//    SKP_int32 packetLoss_perc = 0;
 #if LOW_COMPLEXITY_ONLY
     SKP_int32 complexity_mode = 0;
 #else
@@ -143,9 +143,14 @@ int main(int argc, char *argv[]) {
 #endif
     SKP_int32 DTX_enabled = 0, INBandFEC_enabled = 0, quiet = 0;
     SKP_SILK_SDK_EncControlStruct encControl = {
+            .packetSize = 20,
             .API_sampleRate = 24000,
             .maxInternalSampleRate = 24000,
             .bitRate = 25000,
+            .useInBandFEC = 0,
+            .useDTX = 0,
+            .packetLossPercentage = 0,
+            .complexity = 2,
     }; // Struct for input to encoder
     SKP_SILK_SDK_EncControlStruct encStatus;  // Struct for status of encoder
 
@@ -182,16 +187,16 @@ int main(int argc, char *argv[]) {
             sscanf(argv[args + 1], "%d", &encControl.bitRate);
             args += 2;
         } else if (SKP_STR_CASEINSENSITIVE_COMPARE(argv[args], "-loss") == 0) {
-            sscanf(argv[args + 1], "%d", &packetLoss_perc);
+            sscanf(argv[args + 1], "%d", &encControl.packetLossPercentage);
             args += 2;
         } else if (SKP_STR_CASEINSENSITIVE_COMPARE(argv[args], "-complexity") == 0) {
-            sscanf(argv[args + 1], "%d", &complexity_mode);
+            sscanf(argv[args + 1], "%d", &encControl.complexity);
             args += 2;
         } else if (SKP_STR_CASEINSENSITIVE_COMPARE(argv[args], "-inbandFEC") == 0) {
-            sscanf(argv[args + 1], "%d", &INBandFEC_enabled);
+            sscanf(argv[args + 1], "%d", &encControl.useInBandFEC);
             args += 2;
         } else if (SKP_STR_CASEINSENSITIVE_COMPARE(argv[args], "-DTX") == 0) {
-            sscanf(argv[args + 1], "%d", &DTX_enabled);
+            sscanf(argv[args + 1], "%d", &encControl.useDTX);
             args += 2;
         } else if (SKP_STR_CASEINSENSITIVE_COMPARE(argv[args], "-quiet") == 0) {
             quiet = 1;
@@ -220,13 +225,12 @@ int main(int argc, char *argv[]) {
     /* Print options */
     if (!quiet) {
         printf("**** Silk Encoder v%s ** %d bit ****\n", SKP_Silk_SDK_get_version(), (int) sizeof(void *) * 8);
-        printf("API sampling rate:              %d Hz\n", encControl.API_sampleRate);
-        printf("Maximum internal sampling rate: %d Hz\n", encControl.maxInternalSampleRate);
-        printf("Packet interval:                %d ms\n", encControl.packetSize);
-        printf("Inband FEC used:                %d\n", INBandFEC_enabled);
-        printf("DTX used:                       %d\n", DTX_enabled);
-        printf("Complexity:                     %d\n", complexity_mode);
-        printf("Target bitrate:                 %d bps\n", encControl.bitRate);
+        printf("Input sampling rate:    %d Hz\n", encControl.API_sampleRate);
+        printf("Output sampling rate:   %d Hz\n", encControl.maxInternalSampleRate);
+        printf("Packet interval:        %d ms\n", encControl.packetSize);
+        printf("Inband FEC used:        %d\n", encControl.useInBandFEC);
+        printf("DTX used:               %d\n", encControl.useDTX);
+        printf("Complexity:             %d\n", complexity_mode);
     }
 
     /* Add Silk header to stream */
@@ -242,19 +246,9 @@ int main(int argc, char *argv[]) {
 
     psEnc = malloc(encSizeBytes);
 
-    /* Reset Encoder */
-    ret = SKP_Silk_SDK_InitEncoder(psEnc, &encStatus);
-    if (ret) {
-        printf("\nError: SKP_Silk_reset_encoder returned %d\n", ret);
-        exit(0);
-    }
 
     /* Set Encoder parameters */
     encControl.packetSize = (packetSize_ms * encControl.API_sampleRate) / 1000;
-    encControl.packetLossPercentage = packetLoss_perc;
-    encControl.useInBandFEC = INBandFEC_enabled;
-    encControl.useDTX = DTX_enabled;
-    encControl.complexity = complexity_mode;
 
     if (encControl.API_sampleRate > MAX_API_FS_KHZ * 1000 || encControl.API_sampleRate < 0) {
         printf("\nError: API sampling rate = %d out of range, valid range 8000 - 48000 \n \n",
@@ -263,6 +257,14 @@ int main(int argc, char *argv[]) {
     }
 
     reEncode:
+    /* Reset Encoder */
+    ret = SKP_Silk_SDK_InitEncoder(psEnc, &encStatus);
+    if (ret) {
+        printf("\nError: SKP_Silk_reset_encoder returned %d\n", ret);
+        exit(0);
+    }
+    if (!quiet)
+        printf("Target bitrate:         %d bps\n", encControl.bitRate);
     totPackets = 0;
 //    totActPackets = 0;
 //    sumActBytes = 0.0;
@@ -286,18 +288,19 @@ int main(int argc, char *argv[]) {
         ret = SKP_Silk_SDK_Encode(psEnc, &encControl, in, (SKP_int16) counter, payload, &nBytes);
         if (ret) {
             printf("\nSKP_Silk_Encode returned %d", ret);
+            exit(1);
         }
 
         /* Get packet size */
-        packetSize_ms = (SKP_int) ((1000 * (SKP_int32) encControl.packetSize) / encControl.API_sampleRate);
+//        packetSize_ms = (SKP_int) ((1000 * (SKP_int32) encControl.packetSize) / encControl.API_sampleRate);
 
-        smplsSinceLastPacket += (SKP_int) counter;
+//        smplsSinceLastPacket += (SKP_int) counter;
 
-        if (((1000 * smplsSinceLastPacket) / encControl.API_sampleRate) == packetSize_ms) {
-            /* Sends a dummy zero size packet in case of DTX period  */
-            /* to make it work with the decoder test program.        */
-            /* In practice should be handled by RTP sequence numbers */
-            totPackets++;
+//        if (((1000 * smplsSinceLastPacket) / encControl.API_sampleRate) == packetSize_ms) {
+        /* Sends a dummy zero size packet in case of DTX period  */
+        /* to make it work with the decoder test program.        */
+        /* In practice should be handled by RTP sequence numbers */
+        totPackets++;
 //            nrg = 0.0;
 //            for (k = 0; k < (SKP_int) counter; k++) {
 //                nrg += in[k] * (double) in[k];
@@ -307,49 +310,42 @@ int main(int argc, char *argv[]) {
 //                totActPackets++;
 //            }
 
-            /* Write payload size */
+        /* Write payload size */
 #ifdef _SYSTEM_IS_BIG_ENDIAN
-            nBytes_LE = nBytes;
-            swap_endian( &nBytes_LE, 1 );
-            fwrite( &nBytes_LE, sizeof( SKP_int16 ), 1, bitOutFile );
+        nBytes_LE = nBytes;
+        swap_endian( &nBytes_LE, 1 );
+        fwrite( &nBytes_LE, sizeof( SKP_int16 ), 1, bitOutFile );
 #else
-            fwrite(&nBytes, sizeof(SKP_int16), 1, bitOutFile);
+        fwrite(&nBytes, sizeof(SKP_int16), 1, bitOutFile);
 #endif
 
-            /* Write payload */
-            fwrite(payload, sizeof(SKP_uint8), nBytes, bitOutFile);
+        /* Write payload */
+        fwrite(payload, sizeof(SKP_uint8), nBytes, bitOutFile);
 
-            smplsSinceLastPacket = 0;
+//            smplsSinceLastPacket = 0;
 
-            if (!quiet)
-                fprintf(stderr, "\rPackets encoded:                %d/%d", totPackets, estPackets);
-        }
+        if (!quiet)
+            fprintf(stderr, "\rPackets encoded:        %d/%d", totPackets, estPackets);
+//        }
     }
     time = GetHighResolutionTime() - time;
     if (!quiet)
-        printf("\nTime for encoding:              %.3f s (%.3f%% of realtime)", 1e-6 * time,
-               1e-4 * time / filetime);
+        printf("\nTime for encoding:      %.3f s (%.3fx)", 1e-6 * time,
+               1e6 * filetime / time);
 #define FILE_MAX_SIZE (1U << 20)
     if (ftell(bitOutFile) > FILE_MAX_SIZE) {
-        printf("\n**** file size exceeded... lowering bitrate\n");
+        printf("\n* file size exceeded... lowering bitrate\n");
 //        encControl.bitRate -= (ftell(bitOutFile) - FILE_MAX_SIZE) / filetime;
         encControl.bitRate -= 1024;
-        if (!quiet)
-            printf("Target bitrate:                 %d bps\n", encControl.bitRate);
         fseek(speechInFile, 0, SEEK_SET);
         fseek(bitOutFile, 0, SEEK_SET);
-        ret = SKP_Silk_SDK_InitEncoder(psEnc, &encStatus);
-        if (ret) {
-            printf("\nError: SKP_Silk_reset_encoder returned %d\n", ret);
-            exit(0);
-        }
         goto reEncode;
     }
 
     /* Free Encoder */
     free(psEnc);
 
-    avg_rate = ftell(bitOutFile) * 8 / filetime;
+    float avg_rate = ftell(bitOutFile) * 8 / filetime;
     fclose(speechInFile);
     fclose(bitOutFile);
 
@@ -357,9 +353,8 @@ int main(int argc, char *argv[]) {
 
 //    act_rate = 8.0 / packetSize_ms * sumActBytes / totActPackets;
     if (!quiet) {
-        printf("\nFile length:                    %.3f s", filetime);
-        printf("\nOverall bitrate:                %.3f bps", avg_rate);
-        printf("\n\n");
+        printf("\nFile length:            %.3f s", filetime);
+        printf("\nOverall bitrate:        %.0f bps\n", avg_rate);
     }
     return 0;
 }
